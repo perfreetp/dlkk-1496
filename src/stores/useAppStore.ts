@@ -22,7 +22,7 @@ import {
 } from '@/mock/data';
 import { generateId, isNightTime, getRule, getElapsedMinutes } from '@/utils/format';
 
-type PendingNotification = Omit<NotificationLog, 'id' | 'sentAt' | 'status'> & {
+type PendingNotification = Omit<NotificationLog, 'sentAt' | 'status'> & {
   delayedUntil: Date;
 };
 
@@ -132,7 +132,15 @@ function buildNotificationLogs(
       };
 
       if (status === 'PENDING_SEND' && delayedUntil) {
-        pending.push({ ...base, delayedUntil });
+        const id = generateId('n');
+        pending.push({ id, ...base, delayedUntil });
+        logs.push({
+          id,
+          sentAt: delayedUntil,
+          status,
+          delayedUntil,
+          ...base,
+        });
       } else {
         logs.push({
           id: generateId('n'),
@@ -217,16 +225,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     const remain = state.pendingNotifications.filter(p => new Date(p.delayedUntil).getTime() > now.getTime());
     if (due.length === 0) return;
 
-    const flushed: NotificationLog[] = due.map(p => ({
-      id: generateId('n'),
-      criticalValueId: p.criticalValueId,
-      recipientId: p.recipientId,
-      channel: p.channel,
-      sentAt: now,
-      status: 'SENT',
-      policy: 'NIGHT_DELAYED',
-    }));
-    set({ notificationLogs: [...state.notificationLogs, ...flushed], pendingNotifications: remain });
+    const dueIds = new Set(due.map(p => p.id));
+    const updatedLogs = state.notificationLogs.map(n => {
+      if (dueIds.has(n.id)) {
+        return { ...n, status: 'SENT' as const, sentAt: now };
+      }
+      return n;
+    });
+    set({ notificationLogs: updatedLogs, pendingNotifications: remain });
   },
 
   markAsPushed: (id, recipientIds) => {
@@ -418,7 +424,13 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   updateRecipientChannels: (id, data) => {
     set(state => ({
-      recipients: state.recipients.map(r => (r.id === id ? { ...r, ...data } : r)),
+      recipients: state.recipients.map(r => {
+        if (r.id !== id) return r;
+        const next = { ...r };
+        if (typeof data.sms === 'boolean') next.smsEnabled = data.sms;
+        if (typeof data.inApp === 'boolean') next.inAppEnabled = data.inApp;
+        return next;
+      }),
     }));
   },
 

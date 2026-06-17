@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import {
   Filter,
   AlertTriangle,
@@ -24,16 +24,6 @@ export default function CriticalValueListPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [openAckId, setOpenAckId] = useState<string | null>(null);
   const [showFilters, setShowFilters] = useState(true);
-
-  useEffect(() => {
-    store.processAutoRemindersAndEscalations();
-    store.flushPendingNotifications();
-    const timer = setInterval(() => {
-      store.processAutoRemindersAndEscalations();
-      store.flushPendingNotifications();
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [store]);
 
   const allCVs = useMemo(() => sortCriticalValues(store.criticalValues), [store.criticalValues]);
 

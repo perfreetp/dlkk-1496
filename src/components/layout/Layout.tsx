@@ -1,5 +1,5 @@
 import { Outlet, useLocation } from 'react-router-dom';
-import { useMemo } from 'react';
+import { useMemo, useEffect } from 'react';
 import Sidebar from './Sidebar';
 import Header from './Header';
 import { useAppStore } from '@/stores/useAppStore';
@@ -14,7 +14,18 @@ const titles: Record<string, { title: string; subtitle: string }> = {
 
 export default function Layout() {
   const location = useLocation();
-  const cvs = useAppStore(s => s.criticalValues);
+  const store = useAppStore();
+  const cvs = store.criticalValues;
+
+  useEffect(() => {
+    store.processAutoRemindersAndEscalations();
+    store.flushPendingNotifications();
+    const timer = setInterval(() => {
+      store.processAutoRemindersAndEscalations();
+      store.flushPendingNotifications();
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [store]);
 
   const pageInfo = useMemo(() => {
     for (const key of Object.keys(titles)) {
