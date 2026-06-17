@@ -36,7 +36,7 @@ import { useAppStore } from '@/stores/useAppStore';
 import { getLevelInfo, formatDuration, formatDateTime, getElapsedMinutes } from '@/utils/format';
 import { getDeptName, getRecipientName, getRecipient } from '@/mock/data';
 import { LevelBadge, StatusBadge, CriticalDetailModal } from '@/components/common/CriticalCard';
-import type { CriticalValue, CriticalLevel, CriticalStatus } from '@/types';
+import type { CriticalValue, CriticalLevel, CriticalStatus, Recipient } from '@/types';
 import clsx from 'clsx';
 
 export default function ProcessingRecordsPage() {
@@ -166,6 +166,41 @@ export default function ProcessingRecordsPage() {
   const ackRate = dateFilteredCVs.length > 0
     ? Math.round((dateFilteredCVs.filter(c => c.acknowledgedAt).length / dateFilteredCVs.length) * 100)
     : 0;
+
+  const statsByRecipient = useMemo(() => {
+    const cvIds = new Set(dateFilteredCVs.map(c => c.id));
+    const map = new Map<string, {
+      recipient: Recipient;
+      push: number; remind: number; escalate: number; resend: number; skipped: number; total: number;
+      cvIds: Set<string>;
+    }>();
+    store.notificationLogs
+      .filter(n => cvIds.has(n.criticalValueId))
+      .forEach(n => {
+        const r = store.recipients.find(x => x.id === n.recipientId);
+        if (!r) return;
+        if (!map.has(n.recipientId)) {
+          map.set(n.recipientId, {
+            recipient: r, push: 0, remind: 0, escalate: 0, resend: 0, skipped: 0, total: 0,
+            cvIds: new Set(),
+          });
+        }
+        const entry = map.get(n.recipientId)!;
+        entry.total++;
+        entry.cvIds.add(n.criticalValueId);
+        const t = n.notificationType || 'PUSH';
+        if (n.status === 'SKIPPED') entry.skipped++;
+        else if (t === 'PUSH') entry.push++;
+        else if (t === 'REMIND') entry.remind++;
+        else if (t === 'ESCALATE') entry.escalate++;
+        else if (t === 'RESEND') entry.resend++;
+        else entry.push++;
+      });
+    return Array.from(map.values())
+      .sort((a, b) => b.total - a.total);
+  }, [dateFilteredCVs, store.notificationLogs, store.recipients]);
+
+  const [selectedRecipientStats, setSelectedRecipientStats] = useState<string | null>(null);
 
   return (
     <div className="space-y-6 animate-fade-in-up">
@@ -351,6 +386,65 @@ export default function ProcessingRecordsPage() {
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+
+            {/* 按接收人通知复盘 */}
+            <div className="rounded-xl border border-slate-200 overflow-hidden">
+              <div className="px-4 py-3 bg-slate-50 border-b flex items-center justify-between">
+                <h4 className="text-sm font-bold text-slate-700 flex items-center gap-1.5">
+                  <Users className="w-4 h-4 text-primary-700" />
+                  按接收人通知复盘
+                </h4>
+                <span className="text-xs text-slate-500">共 {statsByRecipient.length} 人</span>
+              </div>
+              <div className="divide-y divide-slate-100 max-h-80 overflow-y-auto">
+                {statsByRecipient.length === 0 ? (
+                  <div className="py-10 text-center text-slate-400 text-sm">暂无通知数据</div>
+                ) : (
+                  statsByRecipient.map(s => (
+                    <div key={s.recipient.id} className="px-4 py-3 hover:bg-slate-50/60 transition-colors cursor-pointer"
+                      onClick={() => { setSelectedRecipientStats(s.recipient.id); setSelectedId([...s.cvIds][0] || null); }}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary-400 to-primary-700 text-white flex items-center justify-center text-sm font-bold shrink-0">
+                          {s.recipient.name.charAt(0)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="font-bold text-slate-800 text-sm">{s.recipient.name}</p>
+                            <span className="text-[10px] text-slate-500">{getDeptName(s.recipient.departmentId)}</span>
+                            <span className="text-[10px] text-slate-400">· {s.recipient.title}</span>
+                          </div>
+                          <div className="flex items-center gap-3 mt-1 flex-wrap">
+                            <span className="text-[11px] text-slate-500">
+                              初次推送 <b className="text-blue-600 font-mono">{s.push}</b>
+                            </span>
+                            <span className="text-[11px] text-slate-500">
+                              催办 <b className="text-critical-orange font-mono">{s.remind}</b>
+                            </span>
+                            <span className="text-[11px] text-slate-500">
+                              升级 <b className="text-critical-red font-mono">{s.escalate}</b>
+                            </span>
+                            <span className="text-[11px] text-slate-500">
+                              补发 <b className="text-primary-700 font-mono">{s.resend}</b>
+                            </span>
+                            {s.skipped > 0 && (
+                              <span className="text-[11px] text-slate-400">
+                                跳过 <b className="font-mono">{s.skipped}</b>
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="text-lg font-bold font-mono text-slate-800">{s.total}</p>
+                          <p className="text-[10px] text-slate-400">条通知</p>
+                        </div>
+                        <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           </div>

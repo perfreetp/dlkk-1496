@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '@/stores/useAppStore';
 import { getDeptName } from '@/mock/data';
+import { getLevelInfo, formatDateTime } from '@/utils/format';
 import type { Recipient, ShiftType } from '@/types';
 import clsx from 'clsx';
 
@@ -228,52 +229,112 @@ export default function RecipientManagementPage() {
                   const from = store.recipients.find(r => r.id === h.fromRecipientId);
                   const to = store.recipients.find(r => r.id === h.toRecipientId);
                   const dept = store.departments.find(d => d.id === h.departmentId);
+                  const relatedCVs = store.criticalValues.filter(cv =>
+                    cv.departmentId === h.departmentId &&
+                    new Date(cv.reportedAt).getTime() >= new Date(h.startTime).getTime() &&
+                    new Date(cv.reportedAt).getTime() <= new Date(h.endTime).getTime()
+                  );
+                  const statusText = isActive ? '进行中' : isUpcoming ? '即将开始' : h.status === 'ENDED' ? '已结束' : '已取消';
+                  const endType = h.status === 'ENDED' ? '正常到期' : h.status === 'CANCELLED' ? '提前取消' : '进行中';
+
+                  const copySummary = () => {
+                    const lines = [
+                      '【值班交接摘要】',
+                      `交接科室：${dept?.name || '-'}`,
+                      `原责任人：${from?.name || '-'}（${from?.title || '-'}）`,
+                      `接收人：${to?.name || '-'}（${to?.title || '-'}）`,
+                      `生效时间：${new Date(h.startTime).toLocaleString()}`,
+                      `结束时间：${new Date(h.endTime).toLocaleString()}`,
+                      `交接状态：${statusText}`,
+                      `结束方式：${endType}`,
+                      `交接原因：${h.reason || '未填写'}`,
+                      `期间关联危急值：${relatedCVs.length} 条`,
+                      ...relatedCVs.slice(0, 10).map(cv => `  · ${getLevelInfo(cv.level).label} · ${cv.patientName} · ${cv.testItem} ${cv.testResult}${cv.unit}`),
+                      relatedCVs.length > 10 ? `  ... 还有 ${relatedCVs.length - 10} 条` : '',
+                    ].filter(Boolean).join('\n');
+                    navigator.clipboard?.writeText(lines);
+                  };
+
                   return (
                     <div key={h.id} className={clsx(
-                      'flex items-start gap-4 p-4 rounded-xl border',
+                      'rounded-xl border overflow-hidden',
                       isActive ? 'bg-primary-50/50 border-primary-200' :
                       isUpcoming ? 'bg-amber-50/50 border-amber-200' :
                       'bg-slate-50 border-slate-200'
                     )}>
-                      <div className={clsx(
-                        'w-10 h-10 rounded-lg flex items-center justify-center shrink-0',
-                        isActive ? 'bg-primary-600 text-white' :
-                        isUpcoming ? 'bg-amber-500 text-white' :
-                        'bg-slate-300 text-slate-600'
-                      )}>
-                        <ArrowRightLeft className="w-5 h-5" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-bold text-slate-800">{dept?.name}</span>
-                          <span className={clsx(
-                            'badge text-[10px]',
-                            isActive ? 'badge-primary' :
-                            isUpcoming ? 'badge bg-amber-100 text-amber-700' :
-                            'badge-gray'
-                          )}>
-                            {isActive ? '进行中' : isUpcoming ? '即将开始' : h.status === 'ENDED' ? '已结束' : '已取消'}
-                          </span>
+                      <div className="flex items-start gap-4 p-4">
+                        <div className={clsx(
+                          'w-10 h-10 rounded-lg flex items-center justify-center shrink-0',
+                          isActive ? 'bg-primary-600 text-white' :
+                          isUpcoming ? 'bg-amber-500 text-white' :
+                          'bg-slate-300 text-slate-600'
+                        )}>
+                          <ArrowRightLeft className="w-5 h-5" />
                         </div>
-                        <div className="flex items-center gap-2 mt-1.5 text-sm">
-                          <span className={clsx('font-medium', from?.isBlacklisted ? 'text-slate-400 line-through' : 'text-slate-700')}>
-                            {from?.name || '未知'}
-                          </span>
-                          <ArrowRightLeft className="w-3.5 h-3.5 text-slate-400" />
-                          <span className="font-medium text-primary-700">{to?.name || '未知'}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-bold text-slate-800">{dept?.name}</span>
+                            <span className={clsx(
+                              'badge text-[10px]',
+                              isActive ? 'badge-primary' :
+                              isUpcoming ? 'badge bg-amber-100 text-amber-700' :
+                              'badge-gray'
+                            )}>
+                              {statusText}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 mt-1.5 text-sm">
+                            <span className={clsx('font-medium', from?.isBlacklisted ? 'text-slate-400 line-through' : 'text-slate-700')}>
+                              {from?.name || '未知'}
+                            </span>
+                            <ArrowRightLeft className="w-3.5 h-3.5 text-slate-400" />
+                            <span className="font-medium text-primary-700">{to?.name || '未知'}</span>
+                            <span className="text-slate-400">· {endType}</span>
+                          </div>
+                          <p className="text-xs text-slate-500 mt-1">
+                            {new Date(h.startTime).toLocaleString()} → {new Date(h.endTime).toLocaleString()}
+                          </p>
+                          {h.reason && <p className="text-xs text-slate-500 mt-0.5">原因：{h.reason}</p>}
+                          <p className="text-xs text-slate-500 mt-1">
+                            📋 期间关联危急值：<b className="text-slate-700">{relatedCVs.length}</b> 条
+                          </p>
                         </div>
-                        <p className="text-xs text-slate-500 mt-1">
-                          {new Date(h.startTime).toLocaleString()} → {new Date(h.endTime).toLocaleString()}
-                        </p>
-                        {h.reason && <p className="text-xs text-slate-500 mt-0.5">原因：{h.reason}</p>}
+                        <div className="flex flex-col gap-1.5 items-end shrink-0">
+                          {isActive && (
+                            <button
+                              onClick={() => store.endHandover(h.id)}
+                              className="btn-outline !py-1 text-xs"
+                            >
+                              <X className="w-3 h-3" /> 提前结束
+                            </button>
+                          )}
+                          <button
+                            onClick={copySummary}
+                            className="btn-outline !py-1 text-xs"
+                          >
+                            📋 复制摘要
+                          </button>
+                        </div>
                       </div>
-                      {isActive && (
-                        <button
-                          onClick={() => store.endHandover(h.id)}
-                          className="btn-outline !py-1 text-xs shrink-0"
-                        >
-                          <X className="w-3 h-3" /> 提前结束
-                        </button>
+                      {relatedCVs.length > 0 && (
+                        <div className="border-t border-slate-200/70 bg-white/50 px-4 py-2 max-h-40 overflow-y-auto">
+                          <p className="text-xs font-medium text-slate-600 mb-1.5">期间危急值列表：</p>
+                          <div className="space-y-1">
+                            {relatedCVs.map(cv => (
+                              <div key={cv.id} className="flex items-center gap-2 text-xs py-0.5">
+                                <span className={clsx(
+                                  'w-1.5 h-1.5 rounded-full',
+                                  cv.level === 'RED' ? 'bg-critical-red' :
+                                  cv.level === 'ORANGE' ? 'bg-critical-orange' : 'bg-critical-yellow'
+                                )} />
+                                <span className="text-slate-700 font-medium">{cv.patientName}</span>
+                                <span className="text-slate-400">·</span>
+                                <span className="text-slate-500">{cv.testItem} {cv.testResult}{cv.unit}</span>
+                                <span className="text-slate-400 text-[10px] ml-auto">{formatDateTime(cv.reportedAt)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       )}
                     </div>
                   );

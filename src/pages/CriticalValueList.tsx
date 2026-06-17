@@ -60,17 +60,12 @@ export default function CriticalValueListPage() {
   }, [allCVs]);
 
   const handlePush = (cv: CriticalValue) => {
-    const recipients = store.recipients
-      .filter(r => r.departmentId === cv.departmentId && r.isOnDuty && !r.isBlacklisted && (r.role === 'DOCTOR' || r.role === 'NURSE'))
-      .map(r => r.id);
-    const toPush = recipients.length > 0 ? recipients : store.recipients.filter(r => r.departmentId === cv.departmentId).map(r => r.id);
-    store.markAsPushed(cv.id, toPush);
+    const recipients = store.getEffectiveOnDutyRecipients(cv.departmentId).map(r => r.id);
+    store.markAsPushed(cv.id, recipients);
   };
 
   const handleRemind = (cv: CriticalValue) => {
-    const recipients = store.recipients
-      .filter(r => r.departmentId === cv.departmentId && r.isOnDuty && !r.isBlacklisted)
-      .map(r => r.id);
+    const recipients = store.getEffectiveOnDutyRecipients(cv.departmentId).map(r => r.id);
     store.remindCV(cv.id, recipients);
   };
 

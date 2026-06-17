@@ -73,6 +73,7 @@ interface AppState {
   handoverDuty: (data: { departmentId: string; fromId: string; toId: string; startTime: Date; endTime: Date; reason?: string }) => void;
   endHandover: (id: string) => void;
   getActiveHandoverForDept: (deptId: string) => DutyHandover | undefined;
+  getEffectiveOnDutyRecipients: (deptId: string) => Recipient[];
 
   acknowledgeBatch: (ids: string[], data: { recipientId: string; actionTaken: string; note?: string }) => void;
 
@@ -374,23 +375,6 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   processAutoRemindersAndEscalations: () => {
     const state = get();
-    const now = new Date();
-
-    const getEffectiveHolders = (deptId: string): Recipient[] => {
-      const base = getOnDutyRecipientsByDept(state.recipients, deptId);
-      const handover = state.dutyHandovers.find(h =>
-        h.departmentId === deptId &&
-        h.status === 'ACTIVE' &&
-        new Date(h.startTime).getTime() <= now.getTime() &&
-        new Date(h.endTime).getTime() >= now.getTime()
-      );
-      if (!handover) return base;
-      const toR = state.recipients.find(r => r.id === handover.toRecipientId && !r.isBlacklisted);
-      if (!toR) return base;
-      const filtered = base.filter(r => r.id !== handover.fromRecipientId);
-      if (!filtered.find(r => r.id === toR.id)) filtered.unshift(toR);
-      return filtered.length > 0 ? filtered : [toR];
-    };
 
     state.criticalValues.forEach(cv => {
       if (cv.status !== 'PUSHED' && cv.status !== 'ESCALATED') return;
@@ -401,7 +385,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const sinceLast = cv.lastRemindedAt ? getElapsedMinutes(cv.lastRemindedAt) : elapsed;
 
       if (elapsed >= rule.firstReminderMinutes && sinceLast >= rule.reminderIntervalMinutes && cv.remindCount < rule.maxReminders) {
-        const holders = getEffectiveHolders(cv.departmentId).map(r => r.id);
+        const holders = get().getEffectiveOnDutyRecipients(cv.departmentId).map(r => r.id);
         if (holders.length > 0) {
           get().remindCV(cv.id, holders);
         }
@@ -413,7 +397,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         cv.escalationLevel < rule.escalationLevels &&
         cv.status !== 'ESCALATED'
       ) {
-        const holders = getEffectiveHolders(cv.departmentId);
+        const holders = get().getEffectiveOnDutyRecipients(cv.departmentId);
         const fromId = holders[0]?.id || '';
         const chief = getChiefByDept(state.recipients, state.departments, cv.departmentId);
         const toId = chief?.id || holders[0]?.id || '';
@@ -505,6 +489,23 @@ export const useAppStore = create<AppState>((set, get) => ({
       new Date(h.startTime).getTime() <= now.getTime() &&
       new Date(h.endTime).getTime() >= now.getTime()
     );
+  },
+
+  getEffectiveOnDutyRecipients: deptId => {
+    const state = get();
+    const base = getOnDutyRecipientsByDept(state.recipients, deptId);
+    const handover = state.dutyHandovers.find(h =>
+      h.departmentId === deptId &&
+      h.status === 'ACTIVE' &&
+      new Date(h.startTime).getTime() <= Date.now() &&
+      new Date(h.endTime).getTime() >= Date.now()
+    );
+    if (!handover) return base;
+    const toR = state.recipients.find(r => r.id === handover.toRecipientId && !r.isBlacklisted);
+    if (!toR) return base;
+    const filtered = base.filter(r => r.id !== handover.fromRecipientId);
+    if (!filtered.find(r => r.id === toR.id)) filtered.unshift(toR);
+    return filtered.length > 0 ? filtered : [toR];
   },
 
   acknowledgeBatch: (ids, data) => {

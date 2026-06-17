@@ -49,11 +49,35 @@ export default function AcknowledgeCenterPage() {
     return selectedCVs.every(c => c.departmentId === dept);
   }, [selectedCVs]);
 
+  const groupedByDept = useMemo(() => {
+    const map = new Map<string, CriticalValue[]>();
+    actionable.forEach(cv => {
+      if (!map.has(cv.departmentId)) map.set(cv.departmentId, []);
+      map.get(cv.departmentId)!.push(cv);
+    });
+    return Array.from(map.entries()).map(([deptId, list]) => ({
+      deptId,
+      deptName: getDeptName(deptId),
+      list,
+    }));
+  }, [actionable]);
+
   const handleBatchSubmit = () => {
+    if (!allSameDept || selectedCVs.length === 0) return;
     if (hasRed) {
       setShowRedConfirm(true);
     } else {
       setShowBatchAck(true);
+    }
+  };
+
+  const toggleSelectDept = (deptId: string) => {
+    const deptIds = actionable.filter(c => c.departmentId === deptId).map(c => c.id);
+    const allSelected = deptIds.every(id => selectedIds.includes(id));
+    if (allSelected) {
+      setSelectedIds(prev => prev.filter(id => !deptIds.includes(id)));
+    } else {
+      setSelectedIds(prev => Array.from(new Set([...prev, ...deptIds])));
     }
   };
 
@@ -99,49 +123,85 @@ export default function AcknowledgeCenterPage() {
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <div className="card">
           <div className="card-header border-b-2 border-b-critical-orange/30">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <AlertTriangle className="w-5 h-5 text-critical-orange" />
               <h3 className="font-bold text-slate-800">待接收·待确认</h3>
               <span className="badge-orange">{actionable.length} 条</span>
               {selectedIds.length > 0 && <span className="badge-primary">已选 {selectedIds.length} 条</span>}
+              {selectedIds.length > 0 && !allSameDept && (
+                <span className="badge bg-amber-100 text-amber-700 text-[10px] flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3" /> 跨科室，请拆开处理
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-2">
               {selectedIds.length > 0 && (
                 <button
                   onClick={handleBatchSubmit}
-                  className="btn-success !py-1 text-xs"
+                  disabled={!allSameDept}
+                  className={clsx('!py-1 text-xs', allSameDept ? 'btn-success' : 'btn-outline opacity-50 cursor-not-allowed')}
                 >
                   <CheckCircle2 className="w-3.5 h-3.5" /> 批量确认
                 </button>
               )}
               <button
-                onClick={() => {
-                  if (selectedIds.length > 0) setSelectedIds([]);
-                  else setSelectedIds(actionable.filter(c => c.status !== 'PENDING_PUSH').map(c => c.id));
-                }}
+                onClick={() => setSelectedIds([])}
                 className="btn-ghost !py-1 text-xs"
               >
-                <CheckSquare className="w-3.5 h-3.5" /> {selectedIds.length > 0 ? '清空' : '全选'}
+                <CheckSquare className="w-3.5 h-3.5" /> 清空选择
               </button>
             </div>
           </div>
-          <div className="divide-y divide-slate-100 max-h-[600px] overflow-y-auto">
+          <div className="max-h-[600px] overflow-y-auto">
             {actionable.length === 0 ? (
               <div className="py-16 text-center text-slate-400 text-sm">
                 <CheckCircle2 className="w-12 h-12 mx-auto mb-3 opacity-30" />
                 太棒了！当前没有需要确认的危急值
               </div>
             ) : (
-              actionable.map(cv => (
-                <AckRow
-                  key={cv.id}
-                  cv={cv}
-                  selected={selectedIds.includes(cv.id)}
-                  onToggleSelect={() => toggleSelect(cv.id)}
-                  onView={() => setSelectedId(cv.id)}
-                  onAck={() => setAcknowledgingId(cv.id)}
-                />
-              ))
+              <div className="space-y-4 p-3">
+                {groupedByDept.map(group => {
+                  const allSelected = group.list.every(c => selectedIds.includes(c.id));
+                  const someSelected = group.list.some(c => selectedIds.includes(c.id));
+                  return (
+                    <div key={group.deptId} className="rounded-xl border border-slate-200 overflow-hidden">
+                      <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 border-b border-slate-200">
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => toggleSelectDept(group.deptId)}
+                            className={clsx(
+                              'w-4 h-4 rounded border-2 flex items-center justify-center text-xs',
+                              allSelected ? 'bg-primary-600 border-primary-600 text-white' : 'border-slate-300 bg-white'
+                            )}
+                          >
+                            {allSelected && <CheckCircle2 className="w-3 h-3" />}
+                            {!allSelected && someSelected && <div className="w-2 h-0.5 bg-slate-400 rounded" />}
+                          </button>
+                          <span className="text-sm font-bold text-slate-700">{group.deptName}</span>
+                          <span className="text-[10px] text-slate-500 badge">{group.list.length} 条</span>
+                        </div>
+                        {group.list.filter(c => selectedIds.includes(c.id)).length > 0 && (
+                          <span className="text-[10px] text-primary-600 font-medium">
+                            已选 {group.list.filter(c => selectedIds.includes(c.id)).length}/{group.list.length}
+                          </span>
+                        )}
+                      </div>
+                      <div className="divide-y divide-slate-100">
+                        {group.list.map(cv => (
+                          <AckRow
+                            key={cv.id}
+                            cv={cv}
+                            selected={selectedIds.includes(cv.id)}
+                            onToggleSelect={() => toggleSelect(cv.id)}
+                            onView={() => setSelectedId(cv.id)}
+                            onAck={() => setAcknowledgingId(cv.id)}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </div>
         </div>
@@ -324,7 +384,8 @@ function AckForm({ cv, onClose, onComplete }: {
   const store = useAppStore();
   const level = getLevelInfo(cv.level);
   const deptRecipients = store.recipients.filter(r => r.departmentId === cv.departmentId && !r.isBlacklisted);
-  const [recipientId, setRecipientId] = useState(deptRecipients.find(r => r.isOnDuty)?.id || deptRecipients[0]?.id || '');
+  const effectiveRecipients = store.getEffectiveOnDutyRecipients(cv.departmentId);
+  const [recipientId, setRecipientId] = useState(effectiveRecipients[0]?.id || deptRecipients[0]?.id || '');
   const [actionTaken, setActionTaken] = useState('');
   const [note, setNote] = useState('');
   const [estimated, setEstimated] = useState('60');
@@ -332,7 +393,7 @@ function AckForm({ cv, onClose, onComplete }: {
 
   const submit = () => {
     if (cv.status === 'PENDING_PUSH') {
-      const ids = deptRecipients.filter(r => r.isOnDuty).map(r => r.id);
+      const ids = effectiveRecipients.map(r => r.id);
       if (ids.length > 0) store.markAsPushed(cv.id, ids);
     }
     const data = {

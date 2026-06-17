@@ -3,10 +3,12 @@ import {
   AlertTriangle,
   Clock,
   User,
+  Users,
   Send,
   XCircle,
   CheckCircle2,
   ArrowUpRight,
+  ArrowRightLeft,
   ChevronRight,
   Phone,
   MessageSquare,
@@ -213,6 +215,8 @@ export function CriticalDetailModal({ cv, onClose }: CriticalDetailModalProps) {
   const acknowledges = store.acknowledgeRecords.filter(a => a.criticalValueId === cv.id);
   const escalations = store.escalationRecords.filter(e => e.criticalValueId === cv.id);
   const handler = cv.handlerId ? getRecipient(cv.handlerId) : undefined;
+  const dutyHolders = store.getEffectiveOnDutyRecipients(cv.departmentId);
+  const activeHandover = store.getActiveHandoverForDept(cv.departmentId);
 
   const events: TimelineEvent[] = [];
   events.push({ time: cv.reportedAt, type: 'REPORT', title: '检验科报告危急值', operatorName: '系统自动拉取' });
@@ -317,6 +321,69 @@ export function CriticalDetailModal({ cv, onClose }: CriticalDetailModalProps) {
             </div>
           </div>
 
+          <div className="card p-4">
+            <h4 className="text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
+              <Users className="w-4 h-4" /> 当前值班责任人
+              {activeHandover && (
+                <span className="badge bg-amber-100 text-amber-800 text-[10px] flex items-center gap-1">
+                  <ArrowRightLeft className="w-3 h-3" /> 交接中
+                </span>
+              )}
+            </h4>
+            <div className="space-y-2">
+              {dutyHolders.slice(0, 4).map((r, idx) => (
+                <div key={r.id} className={clsx(
+                  'flex items-center gap-3 p-2.5 rounded-lg border',
+                  idx === 0 ? 'bg-primary-50 border-primary-200' : 'bg-white border-slate-100'
+                )}>
+                  <div className={clsx(
+                    'w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold shrink-0',
+                    idx === 0 ? 'bg-primary-700 text-white' : 'bg-slate-200 text-slate-600'
+                  )}>
+                    {r.name.charAt(0)}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="font-bold text-slate-800 text-sm">
+                        {r.name}
+                        {idx === 0 && <span className="badge-primary text-[10px] ml-1">第一责任人</span>}
+                        {activeHandover?.toRecipientId === r.id && (
+                          <span className="badge bg-amber-100 text-amber-700 text-[10px] ml-1">交接接收</span>
+                        )}
+                        {activeHandover?.fromRecipientId === r.id && (
+                          <span className="badge bg-slate-100 text-slate-500 text-[10px] ml-1 line-through">原值班</span>
+                        )}
+                      </p>
+                      <p className="text-xs text-slate-500">{r.title}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className={clsx('w-6 h-6 rounded-full flex items-center justify-center', r.smsEnabled ? 'bg-green-100 text-green-600' : 'bg-slate-100 text-slate-300')}>
+                      <Phone className="w-3 h-3" />
+                    </span>
+                    <span className={clsx('w-6 h-6 rounded-full flex items-center justify-center', r.inAppEnabled ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-300')}>
+                      <MessageSquare className="w-3 h-3" />
+                    </span>
+                  </div>
+                </div>
+              ))}
+              {activeHandover && (
+                <div className="mt-2 p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
+                  <p className="font-medium flex items-center gap-1.5">
+                    <ArrowRightLeft className="w-3.5 h-3.5" /> 值班交接生效中
+                  </p>
+                  <p className="mt-1 text-amber-700">
+                    {getRecipientName(activeHandover.fromRecipientId)} → {getRecipientName(activeHandover.toRecipientId)}
+                  </p>
+                  <p className="text-amber-600 text-[11px] mt-0.5">
+                    {formatDateTime(activeHandover.startTime)} ~ {formatDateTime(activeHandover.endTime)}
+                    {activeHandover.reason && ` · ${activeHandover.reason}`}
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+
           {handler && (
             <div className="card p-4">
               <h4 className="text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
@@ -386,7 +453,7 @@ export function CriticalDetailModal({ cv, onClose }: CriticalDetailModalProps) {
                   let remindCount = 0;
                   sorted.forEach(n => {
                     const t = n.notificationType || 'PUSH';
-                    let label = t;
+                    let label: string = t;
                     if (t === 'REMIND') {
                       remindCount++;
                       label = `REMIND_${remindCount}`;
