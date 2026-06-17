@@ -378,42 +378,110 @@ export function CriticalDetailModal({ cv, onClose }: CriticalDetailModalProps) {
 
           {notifications.length > 0 && (
             <div>
-              <h4 className="text-sm font-bold text-slate-700 mb-3">📨 通知发送记录 ({notifications.length})</h4>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                {notifications.map(n => {
-                  const pending = n.status === 'PENDING_SEND';
-                  const isSilent = n.policy === 'NIGHT_SILENT';
-                  const isDelayed = n.policy === 'NIGHT_DELAYED';
-                  return (
-                    <div key={n.id} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-slate-50 text-xs">
-                      <span className={clsx(
-                        'w-7 h-7 rounded-full flex items-center justify-center',
-                        n.channel === 'SMS' ? 'bg-green-100 text-critical-success' : 'bg-blue-100 text-blue-700'
-                      )}>
-                        {n.channel === 'SMS' ? <Phone className="w-3.5 h-3.5" /> : <MessageSquare className="w-3.5 h-3.5" />}
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium text-slate-700 flex items-center gap-1 flex-wrap">
-                          {getRecipientName(n.recipientId)}
-                          {isSilent && <span className="badge bg-indigo-50 text-indigo-600 text-[10px]">🌙 夜间静默</span>}
-                          {isDelayed && <span className="badge bg-amber-50 text-amber-700 text-[10px]">⏰ 延迟补发</span>}
-                          {pending && n.delayedUntil && (
-                            <span className="text-[10px] text-slate-500">预计 {formatTime(n.delayedUntil)}</span>
-                          )}
-                        </p>
-                        <p className="text-slate-500 truncate">{n.channel === 'SMS' ? '短信渠道' : '站内消息'} · {pending && n.delayedUntil ? '等待发送' : formatTime(n.sentAt)}</p>
+              <h4 className="text-sm font-bold text-slate-700 mb-4">� 通知链路追踪</h4>
+              <div className="relative pl-6 border-l-2 border-slate-200 space-y-5">
+                {(() => {
+                  const sorted = [...notifications].sort((a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime());
+                  const groups: { key: string; type: string; time: Date; items: NotificationLog[] }[] = [];
+                  let remindCount = 0;
+                  sorted.forEach(n => {
+                    const t = n.notificationType || 'PUSH';
+                    let label = t;
+                    if (t === 'REMIND') {
+                      remindCount++;
+                      label = `REMIND_${remindCount}`;
+                    }
+                    const timeKey = new Date(n.sentAt).toISOString().slice(0, 16);
+                    const key = `${t}_${timeKey}`;
+                    const existing = groups.find(g => g.key === key);
+                    if (existing) {
+                      existing.items.push(n);
+                    } else {
+                      groups.push({ key, type: label, time: new Date(n.sentAt), items: [n] });
+                    }
+                  });
+
+                  const typeLabelMap: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
+                    PUSH: { label: '初次推送', color: 'bg-blue-500', icon: <Send className="w-3 h-3" /> },
+                    REMIND: { label: '催办', color: 'bg-critical-orange', icon: <RefreshCw className="w-3 h-3" /> },
+                    ESCALATE: { label: '升级通知', color: 'bg-critical-red', icon: <ArrowUpRight className="w-3 h-3" /> },
+                    RESEND: { label: '补发通知', color: 'bg-primary-700', icon: <Send className="w-3 h-3" /> },
+                  };
+
+                  return groups.map((g, idx) => {
+                    const baseType = g.type.startsWith('REMIND') ? 'REMIND' : g.type;
+                    const info = typeLabelMap[baseType] || typeLabelMap.PUSH;
+                    const labelText = g.type.startsWith('REMIND_')
+                      ? `第${g.type.split('_')[1]}次催办`
+                      : info.label;
+                    const successCount = g.items.filter(n => n.status === 'SENT' || n.status === 'DELIVERED').length;
+                    const pendingCount = g.items.filter(n => n.status === 'PENDING_SEND').length;
+                    const skippedCount = g.items.filter(n => n.status === 'SKIPPED').length;
+                    const failCount = g.items.filter(n => n.status === 'FAILED').length;
+
+                    return (
+                      <div key={g.key} className="relative">
+                        <div className={clsx(
+                          'absolute -left-[29px] w-6 h-6 rounded-full flex items-center justify-center text-white shadow-md',
+                          info.color
+                        )}>
+                          {info.icon}
+                        </div>
+                        <div className="card p-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-bold text-slate-800">{labelText}</span>
+                              <span className="text-[10px] text-slate-400 font-mono">{formatDateTime(g.time)}</span>
+                            </div>
+                            <div className="flex items-center gap-2 text-[10px]">
+                              {successCount > 0 && <span className="text-critical-success font-medium">✓ {successCount} 成功</span>}
+                              {pendingCount > 0 && <span className="text-slate-500 font-medium">⏳ {pendingCount} 待发</span>}
+                              {skippedCount > 0 && <span className="text-slate-400 font-medium">⊘ {skippedCount} 跳过</span>}
+                              {failCount > 0 && <span className="text-critical-red font-medium">✕ {failCount} 失败</span>}
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                            {g.items.map(n => {
+                              const pending = n.status === 'PENDING_SEND';
+                              const skipped = n.status === 'SKIPPED';
+                              const isSilent = n.policy === 'NIGHT_SILENT';
+                              const isDelayed = n.policy === 'NIGHT_DELAYED';
+                              return (
+                                <div key={n.id} className="flex items-center gap-2 px-2.5 py-1.5 rounded-md bg-slate-50 text-xs">
+                                  <span className={clsx(
+                                    'w-6 h-6 rounded-full flex items-center justify-center shrink-0',
+                                    n.channel === 'SMS' ? 'bg-green-100 text-critical-success' : 'bg-blue-100 text-blue-700'
+                                  )}>
+                                    {n.channel === 'SMS' ? <Phone className="w-3 h-3" /> : <MessageSquare className="w-3 h-3" />}
+                                  </span>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="font-medium text-slate-700 text-xs flex items-center gap-1 flex-wrap">
+                                      {getRecipientName(n.recipientId)}
+                                      {isSilent && <span className="badge bg-indigo-50 text-indigo-600 text-[9px]">🌙 夜间静默</span>}
+                                      {isDelayed && !pending && <span className="badge bg-amber-50 text-amber-700 text-[9px]">⏰ 延迟补发</span>}
+                                      {isDelayed && pending && <span className="badge bg-amber-50 text-amber-700 text-[9px]">⏰ 待{formatTime(n.delayedUntil!)}</span>}
+                                    </p>
+                                    {skipped && n.skippedReason && (
+                                      <p className="text-[10px] text-slate-400">跳过原因：{n.skippedReason}</p>
+                                    )}
+                                  </div>
+                                  <span className={clsx(
+                                    'badge shrink-0 text-[10px]',
+                                    pending ? 'badge bg-slate-100 text-slate-600' :
+                                    skipped ? 'badge bg-slate-100 text-slate-400' :
+                                    n.status === 'SENT' || n.status === 'DELIVERED' ? 'badge-green' : 'badge-red'
+                                  )}>
+                                    {pending ? '待发' : skipped ? '跳过' : n.status === 'FAILED' ? '失败' : '已发'}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
                       </div>
-                      <span className={clsx(
-                        'badge shrink-0',
-                        pending ? 'badge bg-slate-100 text-slate-600' :
-                        n.status === 'SENT' ? 'badge-green' :
-                        n.status === 'DELIVERED' ? 'badge-green' : 'badge-red'
-                      )}>
-                        {pending ? '待发送' : n.status === 'SENT' ? '已发送' : n.status === 'DELIVERED' ? '已送达' : '失败'}
-                      </span>
-                    </div>
-                  );
-                })}
+                    );
+                  });
+                })()}
               </div>
             </div>
           )}

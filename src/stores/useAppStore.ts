@@ -10,6 +10,7 @@ import type {
   NotificationChannel,
   NotificationPolicy,
   EscalationRule,
+  DutyHandover,
 } from '@/types';
 import {
   CRITICAL_VALUES,
@@ -49,7 +50,7 @@ interface AppState {
     criticalValueId: string,
     recipientIds: string[],
     channels?: NotificationChannel[],
-    opts?: { isReminder?: boolean; isEscalation?: boolean }
+    opts?: { isReminder?: boolean; isEscalation?: boolean; type?: 'PUSH' | 'REMIND' | 'ESCALATE' | 'RESEND' }
   ) => void;
 
   flushPendingNotifications: () => void;
@@ -68,6 +69,13 @@ interface AppState {
   removeFromBlacklist: (id: string) => void;
   updateRecipientChannels: (id: string, data: { sms?: boolean; inApp?: boolean }) => void;
 
+  dutyHandovers: DutyHandover[];
+  handoverDuty: (data: { departmentId: string; fromId: string; toId: string; startTime: Date; endTime: Date; reason?: string }) => void;
+  endHandover: (id: string) => void;
+  getActiveHandoverForDept: (deptId: string) => DutyHandover | undefined;
+
+  acknowledgeBatch: (ids: string[], data: { recipientId: string; actionTaken: string; note?: string }) => void;
+
   addMockCriticalValue: (cv?: Partial<CriticalValue>) => void;
 
   dateFilters: {
@@ -84,7 +92,7 @@ function buildNotificationLogs(
   recipients: Recipient[],
   level: CriticalLevel,
   _channels?: NotificationChannel[],
-  opts?: { isReminder?: boolean; isEscalation?: boolean }
+  opts?: { isReminder?: boolean; isEscalation?: boolean; type?: 'PUSH' | 'REMIND' | 'ESCALATE' | 'RESEND' }
 ): { logs: NotificationLog[]; pending: PendingNotification[] } {
   const now = new Date();
   const night = isNightTime(now);
@@ -124,11 +132,13 @@ function buildNotificationLogs(
         }
       }
 
+      const notificationType: NotificationLog['notificationType'] = opts?.type || 'PUSH';
       const base = {
         criticalValueId,
         recipientId: rid,
         channel,
         policy,
+        notificationType,
       };
 
       if (status === 'PENDING_SEND' && delayedUntil) {
@@ -176,6 +186,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   departments: DEPARTMENTS,
   escalationRules: ESCALATION_RULES,
   pendingNotifications: [],
+  dutyHandovers: [],
 
   filters: {
     level: 'ALL',
@@ -227,12 +238,21 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     const dueIds = new Set(due.map(p => p.id));
     const updatedLogs = state.notificationLogs.map(n => {
-      if (dueIds.has(n.id)) {
-        return { ...n, status: 'SENT' as const, sentAt: now };
+      if (!dueIds.has(n.id)) return n;
+      const recipient = state.recipients.find(r => r.id === n.recipientId);
+      const channelEnabled = n.channel === 'SMS' ? recipient?.smsEnabled : recipient?.inAppEnabled;
+      if (!recipient || !channelEnabled || recipient.isBlacklisted) {
+        return {
+          ...n,
+          status: 'SKIPPED' as const,
+          sentAt: now,
+          skippedReason: '渠道已关闭或人员已屏蔽',
+        };
       }
-      return n;
+      return { ...n, status: 'SENT' as const, sentAt: now };
     });
-    set({ notificationLogs: updatedLogs, pendingNotifications: remain });
+    const remainPending = remain;
+    set({ notificationLogs: updatedLogs, pendingNotifications: remainPending });
   },
 
   markAsPushed: (id, recipientIds) => {
@@ -301,7 +321,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const state = get();
     const cv = state.criticalValues.find(c => c.id === id);
     if (!cv) return;
-    const { logs, pending } = buildNotificationLogs(id, recipientIds, state.recipients, cv.level);
+    const { logs, pending } = buildNotificationLogs(id, recipientIds, state.recipients, cv.level, undefined, { type: 'RESEND' });
     set(s => ({
       notificationLogs: [...s.notificationLogs, ...logs],
       pendingNotifications: [...s.pendingNotifications, ...pending],
@@ -313,7 +333,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const cv = state.criticalValues.find(c => c.id === id);
     const now = new Date();
     const { logs, pending } = cv
-      ? buildNotificationLogs(id, [data.toId], state.recipients, cv.level, undefined, { isEscalation: true })
+      ? buildNotificationLogs(id, [data.toId], state.recipients, cv.level, undefined, { isEscalation: true, type: 'ESCALATE' })
       : { logs: [], pending: [] };
     set(s => ({
       criticalValues: s.criticalValues.map(c =>
@@ -341,7 +361,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const cv = state.criticalValues.find(c => c.id === id);
     const now = new Date();
     const { logs, pending } = cv
-      ? buildNotificationLogs(id, recipientIds, state.recipients, cv.level, undefined, { isReminder: true })
+      ? buildNotificationLogs(id, recipientIds, state.recipients, cv.level, undefined, { isReminder: true, type: 'REMIND' })
       : { logs: [], pending: [] };
     set(s => ({
       criticalValues: s.criticalValues.map(cv =>
@@ -356,6 +376,22 @@ export const useAppStore = create<AppState>((set, get) => ({
     const state = get();
     const now = new Date();
 
+    const getEffectiveHolders = (deptId: string): Recipient[] => {
+      const base = getOnDutyRecipientsByDept(state.recipients, deptId);
+      const handover = state.dutyHandovers.find(h =>
+        h.departmentId === deptId &&
+        h.status === 'ACTIVE' &&
+        new Date(h.startTime).getTime() <= now.getTime() &&
+        new Date(h.endTime).getTime() >= now.getTime()
+      );
+      if (!handover) return base;
+      const toR = state.recipients.find(r => r.id === handover.toRecipientId && !r.isBlacklisted);
+      if (!toR) return base;
+      const filtered = base.filter(r => r.id !== handover.fromRecipientId);
+      if (!filtered.find(r => r.id === toR.id)) filtered.unshift(toR);
+      return filtered.length > 0 ? filtered : [toR];
+    };
+
     state.criticalValues.forEach(cv => {
       if (cv.status !== 'PUSHED' && cv.status !== 'ESCALATED') return;
 
@@ -365,7 +401,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const sinceLast = cv.lastRemindedAt ? getElapsedMinutes(cv.lastRemindedAt) : elapsed;
 
       if (elapsed >= rule.firstReminderMinutes && sinceLast >= rule.reminderIntervalMinutes && cv.remindCount < rule.maxReminders) {
-        const holders = getOnDutyRecipientsByDept(state.recipients, cv.departmentId).map(r => r.id);
+        const holders = getEffectiveHolders(cv.departmentId).map(r => r.id);
         if (holders.length > 0) {
           get().remindCV(cv.id, holders);
         }
@@ -377,7 +413,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         cv.escalationLevel < rule.escalationLevels &&
         cv.status !== 'ESCALATED'
       ) {
-        const holders = getOnDutyRecipientsByDept(state.recipients, cv.departmentId);
+        const holders = getEffectiveHolders(cv.departmentId);
         const fromId = holders[0]?.id || '';
         const chief = getChiefByDept(state.recipients, state.departments, cv.departmentId);
         const toId = chief?.id || holders[0]?.id || '';
@@ -432,6 +468,63 @@ export const useAppStore = create<AppState>((set, get) => ({
         return next;
       }),
     }));
+  },
+
+  handoverDuty: data => {
+    const now = new Date();
+    const record: DutyHandover = {
+      id: generateId('h'),
+      departmentId: data.departmentId,
+      fromRecipientId: data.fromId,
+      toRecipientId: data.toId,
+      startTime: data.startTime,
+      endTime: data.endTime,
+      status: 'ACTIVE',
+      reason: data.reason,
+      createdAt: now,
+    };
+    set(state => ({
+      dutyHandovers: [...state.dutyHandovers, record],
+    }));
+  },
+
+  endHandover: id => {
+    set(state => ({
+      dutyHandovers: state.dutyHandovers.map(h =>
+        h.id === id ? { ...h, status: 'ENDED' as const } : h
+      ),
+    }));
+  },
+
+  getActiveHandoverForDept: deptId => {
+    const state = get();
+    const now = new Date();
+    return state.dutyHandovers.find(h =>
+      h.departmentId === deptId &&
+      h.status === 'ACTIVE' &&
+      new Date(h.startTime).getTime() <= now.getTime() &&
+      new Date(h.endTime).getTime() >= now.getTime()
+    );
+  },
+
+  acknowledgeBatch: (ids, data) => {
+    const now = new Date();
+    set(state => {
+      const ackRecords = ids.map(id => ({
+        id: generateId('a'),
+        criticalValueId: id,
+        recipientId: data.recipientId,
+        acknowledgedAt: now,
+        actionTaken: data.actionTaken,
+        note: data.note,
+      }));
+      return {
+        criticalValues: state.criticalValues.map(cv =>
+          ids.includes(cv.id) ? { ...cv, status: 'ACKNOWLEDGED' as CriticalStatus, acknowledgedAt: now, handlerId: data.recipientId, handlerNote: data.note } : cv
+        ),
+        acknowledgeRecords: [...state.acknowledgeRecords, ...ackRecords],
+      };
+    });
   },
 
   addMockCriticalValue: cv => {

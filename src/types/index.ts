@@ -2,9 +2,11 @@ export type CriticalLevel = 'RED' | 'ORANGE' | 'YELLOW';
 export type CriticalStatus = 'PENDING_PUSH' | 'PUSHED' | 'ACKNOWLEDGED' | 'ESCALATED' | 'COMPLETED' | 'MISREPORT';
 export type RecipientRole = 'DOCTOR' | 'NURSE' | 'TECHNICIAN' | 'ADMIN';
 export type NotificationChannel = 'SMS' | 'IN_APP';
-export type NotificationStatus = 'SENT' | 'DELIVERED' | 'FAILED' | 'PENDING_SEND';
+export type NotificationStatus = 'SENT' | 'DELIVERED' | 'FAILED' | 'PENDING_SEND' | 'SKIPPED';
 export type ShiftType = 'DAY' | 'NIGHT' | 'HOLIDAY';
 export type NotificationPolicy = 'NORMAL' | 'NIGHT_SILENT' | 'NIGHT_DELAYED';
+export type NotificationType = 'PUSH' | 'REMIND' | 'ESCALATE' | 'RESEND';
+export type HandoverStatus = 'ACTIVE' | 'ENDED' | 'CANCELLED';
 
 export interface Department {
   id: string;
@@ -68,8 +70,10 @@ export interface NotificationLog {
   sentAt: Date;
   status: NotificationStatus;
   failureReason?: string;
+  skippedReason?: string;
   policy?: NotificationPolicy;
   delayedUntil?: Date;
+  notificationType?: NotificationType;
 }
 
 export interface AcknowledgeRecord {
@@ -122,4 +126,16 @@ export interface StatByDept {
   total: number;
   overdue: number;
   rate: number;
+}
+
+export interface DutyHandover {
+  id: string;
+  departmentId: string;
+  fromRecipientId: string;
+  toRecipientId: string;
+  startTime: Date;
+  endTime: Date;
+  status: HandoverStatus;
+  reason?: string;
+  createdAt: Date;
 }
