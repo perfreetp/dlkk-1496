@@ -2,8 +2,9 @@ export type CriticalLevel = 'RED' | 'ORANGE' | 'YELLOW';
 export type CriticalStatus = 'PENDING_PUSH' | 'PUSHED' | 'ACKNOWLEDGED' | 'ESCALATED' | 'COMPLETED' | 'MISREPORT';
 export type RecipientRole = 'DOCTOR' | 'NURSE' | 'TECHNICIAN' | 'ADMIN';
 export type NotificationChannel = 'SMS' | 'IN_APP';
-export type NotificationStatus = 'SENT' | 'DELIVERED' | 'FAILED';
+export type NotificationStatus = 'SENT' | 'DELIVERED' | 'FAILED' | 'PENDING_SEND';
 export type ShiftType = 'DAY' | 'NIGHT' | 'HOLIDAY';
+export type NotificationPolicy = 'NORMAL' | 'NIGHT_SILENT' | 'NIGHT_DELAYED';
 
 export interface Department {
   id: string;
@@ -56,6 +57,7 @@ export interface CriticalValue {
   handlerNote?: string;
   remindCount: number;
   escalationLevel: number;
+  lastRemindedAt?: Date;
 }
 
 export interface NotificationLog {
@@ -66,6 +68,8 @@ export interface NotificationLog {
   sentAt: Date;
   status: NotificationStatus;
   failureReason?: string;
+  policy?: NotificationPolicy;
+  delayedUntil?: Date;
 }
 
 export interface AcknowledgeRecord {

@@ -45,13 +45,26 @@ export default function ProcessingRecordsPage() {
   const [search, setSearch] = useState('');
   const [deptFilter, setDeptFilter] = useState('');
   const [levelFilter, setLevelFilter] = useState<CriticalLevel | 'ALL'>('ALL');
-  const [dateStart, setDateStart] = useState('');
-  const [dateEnd, setDateEnd] = useState('');
   const [viewMode, setViewMode] = useState<'list' | 'stats'>('stats');
   const [resendCv, setResendCv] = useState<CriticalValue | null>(null);
 
+  const dateStart = store.dateFilters.start;
+  const dateEnd = store.dateFilters.end;
+  const setDateStart = (v: string) => store.setDateFilter('start', v);
+  const setDateEnd = (v: string) => store.setDateFilter('end', v);
+  const clearDateFilters = () => store.clearDateFilters();
+
+  const filterByDate = (c: CriticalValue) => {
+    const t = new Date(c.reportedAt).getTime();
+    if (dateStart && t < new Date(dateStart).getTime()) return false;
+    if (dateEnd && t > new Date(dateEnd).getTime() + 86400000 - 1) return false;
+    return true;
+  };
+
+  const dateFilteredCVs = useMemo(() => store.criticalValues.filter(filterByDate), [store.criticalValues, dateStart, dateEnd]);
+
   const records = useMemo(() => {
-    return store.criticalValues
+    return dateFilteredCVs
       .filter(c => c.status === 'COMPLETED' || c.status === 'MISREPORT' || c.status === 'ACKNOWLEDGED')
       .filter(c => {
         if (deptFilter && c.departmentId !== deptFilter) return false;
@@ -68,11 +81,11 @@ export default function ProcessingRecordsPage() {
         return true;
       })
       .sort((a, b) => new Date(b.reportedAt).getTime() - new Date(a.reportedAt).getTime());
-  }, [store.criticalValues, deptFilter, levelFilter, search]);
+  }, [dateFilteredCVs, deptFilter, levelFilter, search]);
 
   const statsByItem = useMemo(() => {
     const map = new Map<string, { total: number; respTotal: number; overdue: number }>();
-    store.criticalValues.filter(c => c.status === 'COMPLETED' || c.status === 'ACKNOWLEDGED').forEach(c => {
+    dateFilteredCVs.filter(c => c.status === 'COMPLETED' || c.status === 'ACKNOWLEDGED').forEach(c => {
       const resp = c.acknowledgedAt ? getElapsedMinutes(c.acknowledgedAt) - getElapsedMinutes(c.reportedAt) : 0;
       const respMin = c.acknowledgedAt ? (new Date(c.acknowledgedAt).getTime() - new Date(c.reportedAt).getTime()) / 60000 : 0;
       const rule = c.level === 'RED' ? 5 : c.level === 'ORANGE' ? 10 : 15;
@@ -89,11 +102,11 @@ export default function ProcessingRecordsPage() {
       avgMinutes: v.total > 0 ? Math.round(v.respTotal / v.total) : 0,
       overdueRate: v.total > 0 ? Math.round((v.overdue / v.total) * 100) : 0,
     })).sort((a, b) => b.count - a.count);
-  }, [store.criticalValues]);
+  }, [dateFilteredCVs]);
 
   const statsByDept = useMemo(() => {
     const map = new Map<string, { total: number; overdue: number }>();
-    store.criticalValues.filter(c => c.status === 'COMPLETED' || c.status === 'ACKNOWLEDGED' || c.status === 'ESCALATED').forEach(c => {
+    dateFilteredCVs.filter(c => c.status === 'COMPLETED' || c.status === 'ACKNOWLEDGED' || c.status === 'ESCALATED').forEach(c => {
       const respMin = c.acknowledgedAt ? (new Date(c.acknowledgedAt).getTime() - new Date(c.reportedAt).getTime()) / 60000 : c.status === 'ESCALATED' ? 9999 : 0;
       const rule = c.level === 'RED' ? 5 : c.level === 'ORANGE' ? 10 : 15;
       const dept = getDeptName(c.departmentId);
@@ -109,7 +122,7 @@ export default function ProcessingRecordsPage() {
       overdue: v.overdue,
       rate: v.total > 0 ? Math.round((v.overdue / v.total) * 100) : 0,
     }));
-  }, [store.criticalValues]);
+  }, [dateFilteredCVs]);
 
   const trendData = useMemo(() => {
     const days = 7;
@@ -117,7 +130,7 @@ export default function ProcessingRecordsPage() {
     for (let i = days - 1; i >= 0; i--) {
       const d = new Date(Date.now() - i * 86400000);
       const dStr = `${d.getMonth() + 1}/${d.getDate()}`;
-      const cvs = store.criticalValues.filter(c => {
+      const cvs = dateFilteredCVs.filter(c => {
         const cd = new Date(c.reportedAt);
         return cd.getDate() === d.getDate() && cd.getMonth() === d.getMonth();
       });
@@ -130,28 +143,28 @@ export default function ProcessingRecordsPage() {
             return s;
           }, 0) / completed.length
         : 0;
-      arr.push({ date: dStr, total: cvs.length + Math.floor(Math.random() * 5), completed: completed.length + Math.floor(Math.random() * 4), avg: Math.round(avgResp) || Math.floor(Math.random() * 10) + 3 });
+      arr.push({ date: dStr, total: cvs.length, completed: completed.length, avg: Math.round(avgResp) });
     }
     return arr;
-  }, [store.criticalValues]);
+  }, [dateFilteredCVs]);
 
   const pieData = useMemo(() => {
     const levels: CriticalLevel[] = ['RED', 'ORANGE', 'YELLOW'];
     return levels.map(l => ({
       name: getLevelInfo(l).label,
-      value: store.criticalValues.filter(c => c.level === l).length,
+      value: dateFilteredCVs.filter(c => c.level === l).length,
     }));
-  }, [store.criticalValues]);
+  }, [dateFilteredCVs]);
 
-  const completedCount = store.criticalValues.filter(c => c.status === 'COMPLETED').length;
+  const completedCount = dateFilteredCVs.filter(c => c.status === 'COMPLETED').length;
   const avgResponse = useMemo(() => {
-    const done = store.criticalValues.filter(c => c.acknowledgedAt);
+    const done = dateFilteredCVs.filter(c => c.acknowledgedAt);
     if (done.length === 0) return 0;
     const total = done.reduce((s, c) => s + (new Date(c.acknowledgedAt!).getTime() - new Date(c.reportedAt).getTime()) / 60000, 0);
     return Math.round(total / done.length);
-  }, [store.criticalValues]);
-  const ackRate = store.criticalValues.length > 0
-    ? Math.round((store.criticalValues.filter(c => c.acknowledgedAt).length / store.criticalValues.length) * 100)
+  }, [dateFilteredCVs]);
+  const ackRate = dateFilteredCVs.length > 0
+    ? Math.round((dateFilteredCVs.filter(c => c.acknowledgedAt).length / dateFilteredCVs.length) * 100)
     : 0;
 
   return (
@@ -367,7 +380,7 @@ export default function ProcessingRecordsPage() {
               <span className="text-slate-400">—</span>
               <input type="date" className="select !w-40 !py-1.5 text-sm" value={dateEnd} onChange={e => setDateEnd(e.target.value)} />
               <button
-                onClick={() => { setSearch(''); setDeptFilter(''); setLevelFilter('ALL'); setDateStart(''); setDateEnd(''); }}
+                onClick={() => { setSearch(''); setDeptFilter(''); setLevelFilter('ALL'); clearDateFilters(); }}
                 className="btn-ghost !py-1 text-xs"
               >
                 <X className="w-3 h-3" /> 清空

@@ -29,6 +29,7 @@ export default function RecipientManagementPage() {
   const [deptFilter, setDeptFilter] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [blacklistReason, setBlacklistReason] = useState('');
+  const [blacklistUntil, setBlacklistUntil] = useState(new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10));
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().slice(0, 10));
 
   const filtered = useMemo(() => {
@@ -120,7 +121,7 @@ export default function RecipientManagementPage() {
                 </thead>
                 <tbody>
                   {filtered.map(r => (
-                    <RecipientRow key={r.id} r={r} onEdit={() => setEditingId(r.id)} editing={editingId === r.id} />
+                    <RecipientRow key={r.id} r={r} onBlock={() => { setBlacklistReason(''); setBlacklistUntil(new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10)); setEditingId(r.id); }} />
                   ))}
                   {filtered.length === 0 && (
                     <tr><td colSpan={6} className="px-5 py-16 text-center text-slate-400 text-sm">暂无数据</td></tr>
@@ -161,7 +162,7 @@ export default function RecipientManagementPage() {
                       </p>
                     </div>
                     <button
-                      onClick={() => store.toggleBlacklist(r.id)}
+                      onClick={() => store.removeFromBlacklist(r.id)}
                       className="btn-success !py-1.5 text-xs"
                     >
                       <ShieldCheck className="w-3.5 h-3.5" />
@@ -181,13 +182,15 @@ export default function RecipientManagementPage() {
           onClose={() => setEditingId(null)}
           reason={blacklistReason}
           setReason={setBlacklistReason}
+          until={blacklistUntil}
+          setUntil={setBlacklistUntil}
         />
       )}
     </div>
   );
 }
 
-function RecipientRow({ r, onEdit, editing }: { r: Recipient; onEdit: () => void; editing: boolean }) {
+function RecipientRow({ r, onBlock }: { r: Recipient; onBlock: () => void }) {
   const store = useAppStore();
   const roleIconMap = { DOCTOR: <Stethoscope className="w-3.5 h-3.5" />, NURSE: <User className="w-3.5 h-3.5" />, TECHNICIAN: <FlaskConical className="w-3.5 h-3.5" />, ADMIN: <Crown className="w-3.5 h-3.5" /> };
   const roleText = { DOCTOR: '医生', NURSE: '护理', TECHNICIAN: '医技', ADMIN: '管理' } as const;
@@ -264,8 +267,11 @@ function RecipientRow({ r, onEdit, editing }: { r: Recipient; onEdit: () => void
       <td className="px-5 py-3 text-center">
         <button
           onClick={() => {
-            store.toggleBlacklist(r.id, editing ? undefined : '临时屏蔽');
-            onEdit();
+            if (r.isBlacklisted) {
+              store.removeFromBlacklist(r.id);
+            } else {
+              onBlock();
+            }
           }}
           className={clsx(r.isBlacklisted ? 'btn-success !py-1 text-xs' : 'btn-outline !py-1 text-xs')}
         >
@@ -336,8 +342,8 @@ function SchedulePanel({ selectedDate, setSelectedDate }: { selectedDate: string
   );
 }
 
-function BlacklistModal({ recipient, onClose, reason, setReason }: {
-  recipient: Recipient; onClose: () => void; reason: string; setReason: (s: string) => void;
+function BlacklistModal({ recipient, onClose, reason, setReason, until, setUntil }: {
+  recipient: Recipient; onClose: () => void; reason: string; setReason: (s: string) => void; until: string; setUntil: (s: string) => void;
 }) {
   const store = useAppStore();
   return (
@@ -349,14 +355,14 @@ function BlacklistModal({ recipient, onClose, reason, setReason }: {
           </div>
           <div>
             <h3 className="text-lg font-bold text-slate-900">临时屏蔽 - {recipient.name}</h3>
-            <p className="text-sm text-slate-600">屏蔽期间将不接收任何危急值推送</p>
+            <p className="text-sm text-slate-600">屏蔽期间将不接收任何危急值推送（短信、站内消息均不发送）</p>
           </div>
         </div>
         <div className="p-6 space-y-4">
           <div>
-            <label className="label">屏蔽原因</label>
+            <label className="label">屏蔽原因 <span className="text-critical-red">*</span></label>
             <select className="select" value={reason} onChange={e => setReason(e.target.value)}>
-              <option value="">请选择或输入...</option>
+              <option value="">请选择原因...</option>
               <option value="休假">休假</option>
               <option value="外出学习">外出学习/会议</option>
               <option value="调休">调休/轮休</option>
@@ -365,14 +371,20 @@ function BlacklistModal({ recipient, onClose, reason, setReason }: {
             </select>
           </div>
           <div>
-            <label className="label">屏蔽期限</label>
-            <input type="date" className="input" defaultValue={new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10)} />
+            <label className="label">屏蔽期限 <span className="text-critical-red">*</span></label>
+            <input type="date" className="input" value={until} onChange={e => setUntil(e.target.value)} />
+            <p className="text-[11px] text-slate-400 mt-1">到期后系统将自动解除屏蔽，恢复接收通知</p>
           </div>
         </div>
         <div className="px-6 py-4 bg-slate-50 border-t flex justify-end gap-2">
           <button onClick={onClose} className="btn-outline">取消</button>
           <button
-            onClick={() => { store.toggleBlacklist(recipient.id, reason); onClose(); }}
+            disabled={!reason}
+            onClick={() => {
+              const untilDate = until ? new Date(until) : undefined;
+              store.addToBlacklist(recipient.id, reason || '未填写原因', untilDate);
+              onClose();
+            }}
             className="btn-danger"
           >
             <ShieldBan className="w-4 h-4" /> 确认屏蔽
